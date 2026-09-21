@@ -552,17 +552,29 @@ class MainActivity : ComponentActivity() {
                             OutlinedButton(enabled = trimFile != null && !processing, onClick = {
                                 trimFile?.let { play(it); statusText = "Playing trimmed preview" }
                             }) { Text("PREVIEW TRIM") }
+                            OutlinedButton(enabled = !processing && (trimStart != 0f || trimEnd != 100f), onClick = {
+                                trimStart = 0f
+                                trimEnd = 100f
+                                trimFile = null
+                                smoothed = false
+                                statusText = "Trim reset — full recording selected"
+                            }) { Text("RESET") }
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(enabled = ready && !processing, onClick = {
-                        rawFile?.let { play(it); statusText = "Playing original preview" }
-                    }) { Text("PREVIEW ORIGINAL") }
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedButton(enabled = smoothed && !processing, onClick = {
-                        if (smoothFile?.exists() == true) smoothFile?.let { play(it); statusText = "Playing smooth preview" }
-                        else statusText = "Still processing — please wait"
-                    }) { Text("PREVIEW SMOOTH") }
+                    Text("BEFORE / AFTER", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(enabled = ready && !processing, onClick = {
+                            rawFile?.let { play(it); statusText = "Playing ORIGINAL — Before" }
+                        }) { Text("ORIGINAL") }
+                        OutlinedButton(enabled = smoothed && !processing, onClick = {
+                            smoothFile?.takeIf { it.exists() }?.let { play(it); statusText = "Playing PROCESSED — After" }
+                                ?: run { statusText = "Processed audio is not ready" }
+                        }) { Text("PROCESSED") }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("Switch between Original and Processed to compare the voice easily")
                     Spacer(Modifier.height(10.dp))
                     Row {
                         Button(enabled = smoothed && !processing, onClick = {
