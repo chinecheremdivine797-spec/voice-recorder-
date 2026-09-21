@@ -104,7 +104,8 @@ class MainActivity : ComponentActivity() {
         recordingThread = null
     }
 
-    private fun smoothRecording(source: File? = rawFile, onComplete: (Boolean) -> Unit = {}) {\n        val inputFile = source ?: return
+    private fun smoothRecording(source: File? = rawFile, onComplete: (Boolean) -> Unit = {}) {
+        val inputFile = source ?: return
         if (processing) return
         val out = File(cacheDir, "smooth_" + System.currentTimeMillis() + ".wav")
         smoothFile = null
