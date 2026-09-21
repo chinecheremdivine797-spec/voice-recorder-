@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
                         while (recording) {
                             val n = recorder?.read(pcm, 0, pcm.size) ?: 0
                             if (n > 0) {
-                                for (i in 0 until n) out.writeShort(java.lang.Short.reverseBytes(pcm[i]))
+                                for (i in 0 until n) out.writeShort(java.lang.Short.reverseBytes(pcm[i]).toInt())
                                 totalBytes += n * 2
                             }
                         }
@@ -104,7 +104,7 @@ class MainActivity : ComponentActivity() {
         recordingThread = null
     }
 
-    private fun smoothRecording(source: File = rawFile ?: return, onComplete: (Boolean) -> Unit = {}) {
+    private fun smoothRecording(source: File? = rawFile, onComplete: (Boolean) -> Unit = {}) {\n        val inputFile = source ?: return
         if (processing) return
         val out = File(cacheDir, "smooth_" + System.currentTimeMillis() + ".wav")
         smoothFile = null
@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
         Thread {
             var success = false
             try {
-                val audio = readWavPcm(source)
+                val audio = readWavPcm(inputFile)
                 require(audio.samples.size >= audio.sampleRate / 20)
                 val processed = processVoice(audio.samples, audio.sampleRate)
                 writeWav(out, processed, audio.sampleRate)
@@ -277,7 +277,7 @@ class MainActivity : ComponentActivity() {
                 val size = Integer.reverseBytes(input.readInt())
                 when (String(id, Charsets.US_ASCII)) {
                     "fmt " -> {
-                        val format = Short.reverseBytes(input.readShort()).toInt()
+                        val format = java.lang.Short.reverseBytes(input.readShort()).toInt()
                         channels = Short.reverseBytes(input.readShort()).toInt()
                         sampleRate = Integer.reverseBytes(input.readInt())
                         input.skipBytes(6)
@@ -410,7 +410,7 @@ class MainActivity : ComponentActivity() {
     private fun writeWav(file: File, samples: ShortArray, sampleRate: Int) {
         DataOutputStream(BufferedOutputStream(FileOutputStream(file))).use { out ->
             writeWavHeader(out, samples.size * 2, sampleRate, 1, 16)
-            for (sample in samples) out.writeShort(java.lang.Short.reverseBytes(sample))
+            for (sample in samples) out.writeShort(java.lang.Short.reverseBytes(sample).toInt())
         }
     }
 
