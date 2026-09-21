@@ -279,10 +279,10 @@ class MainActivity : ComponentActivity() {
                 when (String(id, Charsets.US_ASCII)) {
                     "fmt " -> {
                         val format = java.lang.Short.reverseBytes(input.readShort()).toInt()
-                        channels = Short.reverseBytes(input.readShort()).toInt()
+                        channels = java.lang.Short.reverseBytes(input.readShort()).toInt()
                         sampleRate = Integer.reverseBytes(input.readInt())
                         input.skipBytes(6)
-                        bits = Short.reverseBytes(input.readShort()).toInt()
+                        bits = java.lang.Short.reverseBytes(input.readShort()).toInt()
                         if (size > 16) input.skipBytes(size - 16)
                         require(format == 1 && channels == 1 && bits == 16) { "Only 16-bit mono PCM WAV is supported" }
                     }
@@ -291,7 +291,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val samples = ShortArray(dataSize / 2)
-            for (i in samples.indices) samples[i] = Short.reverseBytes(input.readShort())
+            for (i in samples.indices) samples[i] = java.lang.Short.reverseBytes(input.readShort())
             return WavAudio(samples, sampleRate)
         }
     }
@@ -421,12 +421,12 @@ class MainActivity : ComponentActivity() {
         out.writeBytes("WAVE")
         out.writeBytes("fmt ")
         out.writeInt(Integer.reverseBytes(16))
-        out.writeShort(java.lang.Short.reverseBytes(1.toShort()))
-        out.writeShort(java.lang.Short.reverseBytes(channels.toShort()))
+        out.writeShort(java.lang.Short.reverseBytes(1.toShort().toInt()))
+        out.writeShort(java.lang.Short.reverseBytes(channels.toShort().toInt()))
         out.writeInt(Integer.reverseBytes(sampleRate))
         out.writeInt(Integer.reverseBytes(sampleRate * channels * bits / 8))
         out.writeShort(java.lang.Short.reverseBytes((channels * bits / 8).toShort()))
-        out.writeShort(java.lang.Short.reverseBytes(bits.toShort()))
+        out.writeShort(java.lang.Short.reverseBytes(bits.toShort().toInt()))
         out.writeBytes("data")
         out.writeInt(Integer.reverseBytes(dataSize))
     }
@@ -439,7 +439,7 @@ class MainActivity : ComponentActivity() {
             raf.writeInt(Integer.reverseBytes(sampleRate))
             raf.writeInt(Integer.reverseBytes(sampleRate * channels * bits / 8))
             raf.seek(34)
-            raf.writeShort(java.lang.Short.reverseBytes(bits.toShort()))
+            raf.writeShort(java.lang.Short.reverseBytes(bits.toShort()).toInt())
             raf.seek(40)
             raf.writeInt(Integer.reverseBytes(dataSize))
         }
