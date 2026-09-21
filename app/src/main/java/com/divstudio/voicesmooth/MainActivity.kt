@@ -14,6 +14,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +31,7 @@ class MainActivity : ComponentActivity() {
     private var player: MediaPlayer? = null
     private var statusText = "Ready to record"
     private var processing = false
+    private var lastError: String? = null
 
     private val permission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -106,7 +109,8 @@ class MainActivity : ComponentActivity() {
         val out = File(cacheDir, "smooth_" + System.currentTimeMillis() + ".wav")
         smoothFile = null
         processing = true
-        statusText = "Cleaning noise + smoothing voice…"
+        lastError = null
+        statusText = "Processing voice…"
         Thread {
             var success = false
             try {
@@ -116,7 +120,7 @@ class MainActivity : ComponentActivity() {
                 writeWav(out, processed, audio.sampleRate)
                 smoothFile = out
                 success = true
-            } catch (_: Exception) { out.delete() }
+            } catch (e: Exception) { lastError = e.message; out.delete() }
             runOnUiThread {
                 processing = false
                 statusText = if (success) "Processed: noise reduced + smooth voice" else "Processing failed — record a little longer and try again"
@@ -449,9 +453,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun save(file: File): Boolean {
+    private fun exportProcessed(file: File): Boolean {
         val values = ContentValues().apply {
-            put(MediaStore.Audio.Media.DISPLAY_NAME, "DIV_Voice_Smooth_" + System.currentTimeMillis() + ".wav")
+            put(MediaStore.Audio.Media.DISPLAY_NAME, "DIV_Voice_Smooth_Processed_" + System.currentTimeMillis() + ".wav")
             put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
             put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/DIV Voice Smooth")
             put(MediaStore.Audio.Media.IS_PENDING, 1)
@@ -507,11 +511,21 @@ class MainActivity : ComponentActivity() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text("DIV Voice Smooth", style = MaterialTheme.typography.headlineMedium)
+                    Text("DIV Voice Smooth", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
-                    Text("Record • Noise Reduce • Smooth • Preview • Save/Share")
+                    Text("Professional voice cleanup for Android", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Record • Clean • Compare • Trim • Export", style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.height(28.dp))
-                    Text(status)
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(status, fontWeight = FontWeight.Medium)
+                            if (processing) {
+                                Spacer(Modifier.height(10.dp))
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(18.dp))
                     Button(onClick = {
                         if (!isRecording) {
@@ -576,17 +590,18 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.height(6.dp))
                     Text("Switch between Original and Processed to compare the voice easily")
                     Spacer(Modifier.height(10.dp))
-                    Row {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(enabled = smoothed && !processing, onClick = {
-                            if (smoothFile?.exists() == true) smoothFile?.let { statusText = if (save(it)) "Saved to Music/DIV Voice Smooth" else "Save failed" }
-                            else statusText = "Still processing — please wait"
-                        }) { Text("SAVE") }
-                        Spacer(Modifier.width(10.dp))
-                        Button(enabled = smoothed, onClick = {
-                            if (smoothFile?.exists() == true) smoothFile?.let { share(it) }
-                            else statusText = "Still processing — please wait"
+                            val file = smoothFile?.takeIf { it.exists() }
+                            statusText = if (file != null && exportProcessed(file)) "Exported to Music/DIV Voice Smooth" else "Export failed"
+                        }) { Text("EXPORT") }
+                        OutlinedButton(enabled = smoothed && !processing, onClick = {
+                            val file = smoothFile?.takeIf { it.exists() }
+                            if (file != null) share(file) else statusText = "Processed audio is not ready"
                         }) { Text("SHARE") }
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Export saves the processed WAV to Music/DIV Voice Smooth.", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
