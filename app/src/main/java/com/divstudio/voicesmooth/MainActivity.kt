@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
     private var smoothFile: File? = null
     private var player: MediaPlayer? = null
     private var statusText = "Ready to record"
+    private var processing = false
 
     private val permission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -116,6 +117,159 @@ class MainActivity : ComponentActivity() {
             }
         }.start()
     }
+
+    private fun smoothRecording(source: File = rawFile ?: return, onComplete: (Boolean) -> Unit = {}) {
+        if (processing) return
+        val out = File(cacheDir, "smooth_" + System.currentTimeMillis() + ".wav")
+        smoothFile = null
+        processing = true
+        statusText = "Cleaning noise + smoothing voice…"
+        Thread {
+            var success = false
+            try {
+                val audio = readWavPcm(source)
+                require(audio.samples.size >= audio.sampleRate / 20)
+                val processed = processVoice(audio.samples, audio.sampleRate)
+                writeWav(out, processed, audio.sampleRate)
+                smoothFile = out
+                success = true
+            } catch (_: Exception) { out.delete() }
+            runOnUiThread {
+                processing = false
+                statusText = if (success) "Processed: noise reduced + smooth voice" else "Processing failed — record a little longer and try again"
+                onComplete(success)
+            }
+        }.start()
+    }
+
+    private fun processVoice(input: ShortArray, sampleRate: Int): ShortArray {
+        if (input.isEmpty() || input.size.toDouble() / sampleRate < 0.25) return input
+        if (rms(input) < 0.0015) return input
+        val denoised = spectralNoiseReduction(input)
+        if (rms(denoised) < 0.001) return denoised
+        var x = denoised.map { it / 32768.0 }.toDoubleArray()
+        val hp1 = FirstOrderHighPass(80.0, sampleRate.toDouble())
+        val hp2 = FirstOrderHighPass(80.0, sampleRate.toDouble())
+        x = DoubleArray(x.size) { hp2.process(hp1.process(x[it])) }
+        val mud = Biquad.peaking(sampleRate.toDouble(), 260.0, 0.85, -1.5)
+        val presence = Biquad.peaking(sampleRate.toDouble(), 2800.0, 0.9, 2.0)
+        val harsh = Biquad.peaking(sampleRate.toDouble(), 5200.0, 1.15, -2.0)
+        x = DoubleArray(x.size) {
+            var y = mud.process(x[it])
+            y = presence.process(y)
+            harsh.process(y)
+        }
+        x = gentleCompress(x, sampleRate, -18.0, 2.2, 1.5)
+        val currentRms = rms(x)
+        if (currentRms > 0.002) {
+            val target = Math.pow(10.0, -16.0 / 20.0)
+            val gain = (target / currentRms).coerceIn(0.25, 3.0)
+            for (i in x.indices) x[i] *= gain
+        }
+        val peak = x.maxOfOrNull { kotlin.math.abs(it) } ?: 0.0
+        if (peak > 0.95) {
+            val gain = 0.95 / peak
+            for (i in x.indices) x[i] *= gain
+        }
+        for (i in x.indices) {
+            val a = kotlin.math.abs(x[i])
+            if (a > 0.85) {
+                val sign = kotlin.math.sign(x[i])
+                val excess = a - 0.85
+                x[i] = sign * (0.85 + excess / (1.0 + excess * 8.0))
+            }
+            x[i] = x[i].coerceIn(-0.98, 0.98)
+        }
+        return ShortArray(x.size) { i -> (x[i] * 32767.0).toInt().coerceIn(-32768, 32767).toShort() }
+    }
+
+    private fun rms(samples: ShortArray): Double {
+        if (samples.isEmpty()) return 0.0
+        var sum = 0.0
+        for (s in samples) { val x = s / 32768.0; sum += x * x }
+        return kotlin.math.sqrt(sum / samples.size)
+    }
+
+    private fun rms(samples: DoubleArray): Double {
+        if (samples.isEmpty()) return 0.0
+        var sum = 0.0
+        for (x in samples) sum += x * x
+        return kotlin.math.sqrt(sum / samples.size)
+    }
+
+    private fun gentleCompress(input: DoubleArray, sampleRate: Int, thresholdDb: Double, ratio: Double, makeupDb: Double): DoubleArray {
+        val output = DoubleArray(input.size)
+        var envelope = 0.0
+        val attack = kotlin.math.exp(-1.0 / (0.010 * sampleRate))
+        val release = kotlin.math.exp(-1.0 / (0.080 * sampleRate))
+        val makeup = Math.pow(10.0, makeupDb / 20.0)
+        for (i in input.indices) {
+            val level = kotlin.math.abs(input[i])
+            val coeff = if (level > envelope) attack else release
+            envelope = coeff * envelope + (1.0 - coeff) * level
+            val levelDb = 20.0 * kotlin.math.log10(envelope.coerceAtLeast(1e-6))
+            val compressedDb = if (levelDb > thresholdDb) thresholdDb + (levelDb - thresholdDb) / ratio else levelDb
+            output[i] = input[i] * Math.pow(10.0, (compressedDb - levelDb) / 20.0) * makeup
+        }
+        return output
+    }
+
+    private class FirstOrderHighPass(cutoff: Double, sampleRate: Double) {
+        private val alpha = run {
+            val rc = 1.0 / (2.0 * Math.PI * cutoff)
+            val dt = 1.0 / sampleRate
+            rc / (rc + dt)
+        }
+        private var previousX = 0.0
+        private var previousY = 0.0
+        fun process(x: Double): Double {
+            val y = alpha * (previousY + x - previousX)
+            previousX = x
+            previousY = y
+            return y
+        }
+    }
+
+    private class Biquad(private val b0: Double, private val b1: Double, private val b2: Double, private val a1: Double, private val a2: Double) {
+        private var z1 = 0.0
+        private var z2 = 0.0
+        fun process(x: Double): Double {
+            val y = b0 * x + z1
+            z1 = b1 * x - a1 * y + z2
+            z2 = b2 * x - a2 * y
+            return y
+        }
+        companion object {
+            fun peaking(sampleRate: Double, frequency: Double, q: Double, gainDb: Double): Biquad {
+                val a = Math.pow(10.0, gainDb / 40.0)
+                val omega = 2.0 * Math.PI * frequency / sampleRate
+                val alpha = kotlin.math.sin(omega) / (2.0 * q)
+                val cos = kotlin.math.cos(omega)
+                val b0 = 1.0 + alpha * a
+                val b1 = -2.0 * cos
+                val b2 = 1.0 - alpha * a
+                val a0 = 1.0 + alpha / a
+                val a1 = -2.0 * cos
+                val a2 = 1.0 - alpha / a
+                return Biquad(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+            }
+        }
+    }
+
+    private fun wavDurationMs(file: File): Long = try {
+        val audio = readWavPcm(file)
+        audio.samples.size.toLong() * 1000L / audio.sampleRate
+    } catch (_: Exception) { 0L }
+
+    private fun trimAudio(source: File, startMs: Long, endMs: Long): File? = try {
+        val audio = readWavPcm(source)
+        val start = (startMs * audio.sampleRate / 1000L).toInt().coerceIn(0, audio.samples.size)
+        val end = (endMs * audio.sampleRate / 1000L).toInt().coerceIn(start, audio.samples.size)
+        require(end - start >= audio.sampleRate / 20)
+        File(cacheDir, "trim_" + System.currentTimeMillis() + ".wav").also {
+            writeWav(it, audio.samples.copyOfRange(start, end), audio.sampleRate)
+        }
+    } catch (_: Exception) { null }
 
     private data class WavAudio(val samples: ShortArray, val sampleRate: Int)
 
@@ -350,6 +504,9 @@ class MainActivity : ComponentActivity() {
         var isRecording by remember { mutableStateOf(false) }
         var ready by remember { mutableStateOf(false) }
         var smoothed by remember { mutableStateOf(false) }
+        var trimStart by remember { mutableStateOf(0f) }
+        var trimEnd by remember { mutableStateOf(100f) }
+        var trimFile by remember { mutableStateOf<File?>(null) }
         var status by remember { mutableStateOf(statusText) }
 
         LaunchedEffect(Unit) {
@@ -385,21 +542,47 @@ class MainActivity : ComponentActivity() {
                         }
                     }) { Text(if (isRecording) "STOP RECORDING" else "RECORD VOICE") }
                     Spacer(Modifier.height(10.dp))
-                    Button(enabled = ready && !isRecording, onClick = { smoothed = true; smoothRecording() }) {
-                        Text("NOISE REDUCE + SMOOTH")
+                    Button(enabled = ready && !isRecording && !processing, onClick = {
+                        val source = trimFile ?: rawFile
+                        if (source != null) smoothRecording(source) { success -> smoothed = success }
+                    }) { Text("NOISE REDUCE + SMOOTH") }
+                    Spacer(Modifier.height(14.dp))
+                    if (ready && rawFile != null) {
+                        Text("Trim: ${trimStart.toInt()}% – ${trimEnd.toInt()}%")
+                        RangeSlider(value = trimStart..trimEnd, onValueChange = { range ->
+                            trimStart = range.start
+                            trimEnd = range.endInclusive
+                            trimFile = null
+                            smoothed = false
+                        }, valueRange = 0f..100f)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(enabled = !processing && trimEnd - trimStart >= 1f, onClick = {
+                                rawFile?.let { source ->
+                                    val duration = wavDurationMs(source)
+                                    val start = (duration * trimStart / 100f).toLong()
+                                    val end = (duration * trimEnd / 100f).toLong()
+                                    trimFile = trimAudio(source, start, end)
+                                    statusText = if (trimFile != null) "Trimmed selection ready" else "Trim failed — choose a longer range"
+                                    smoothed = false
+                                }
+                            }) { Text("APPLY TRIM") }
+                            OutlinedButton(enabled = trimFile != null && !processing, onClick = {
+                                trimFile?.let { play(it); statusText = "Playing trimmed preview" }
+                            }) { Text("PREVIEW TRIM") }
+                        }
                     }
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(enabled = ready, onClick = {
+                    OutlinedButton(enabled = ready && !processing, onClick = {
                         rawFile?.let { play(it); statusText = "Playing original preview" }
                     }) { Text("PREVIEW ORIGINAL") }
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(enabled = smoothed, onClick = {
+                    OutlinedButton(enabled = smoothed && !processing, onClick = {
                         if (smoothFile?.exists() == true) smoothFile?.let { play(it); statusText = "Playing smooth preview" }
                         else statusText = "Still processing — please wait"
                     }) { Text("PREVIEW SMOOTH") }
                     Spacer(Modifier.height(10.dp))
                     Row {
-                        Button(enabled = smoothed, onClick = {
+                        Button(enabled = smoothed && !processing, onClick = {
                             if (smoothFile?.exists() == true) smoothFile?.let { statusText = if (save(it)) "Saved to Music/DIV Voice Smooth" else "Save failed" }
                             else statusText = "Still processing — please wait"
                         }) { Text("SAVE") }
