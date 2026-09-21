@@ -101,23 +101,6 @@ class MainActivity : ComponentActivity() {
         recordingThread = null
     }
 
-    private fun smoothRecording() {
-        val src = rawFile ?: return
-        val out = File(cacheDir, "smooth_" + System.currentTimeMillis() + ".wav")
-        smoothFile = out
-        statusText = "Cleaning background noise…"
-        Thread {
-            try {
-                val audio = readWavPcm(src)
-                val processed = spectralNoiseReduction(audio.samples)
-                writeWav(out, processed, audio.sampleRate)
-                statusText = "Real noise reduction + voice smoothing applied"
-            } catch (e: Exception) {
-                statusText = "Processing failed"
-            }
-        }.start()
-    }
-
     private fun smoothRecording(source: File = rawFile ?: return, onComplete: (Boolean) -> Unit = {}) {
         if (processing) return
         val out = File(cacheDir, "smooth_" + System.currentTimeMillis() + ".wav")
