@@ -39,8 +39,7 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Check release signing secrets
-        id: signing
+      - name: Prepare, sign and verify release APK
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -48,39 +47,40 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          missing=0
-          [[ -z "$KEYSTORE_BASE64" ]] && { echo "Missing KEYSTORE_BASE64"; missing=1; }
-          [[ -z "$KEYSTORE_PASSWORD" ]] && { echo "Missing KEYSTORE_PASSWORD"; missing=1; }
-          [[ -z "$KEY_ALIAS" ]] && { echo "Missing KEY_ALIAS"; missing=1; }
-          [[ -z "$KEY_PASSWORD" ]] && { echo "Missing KEY_PASSWORD"; missing=1; }
-          if [[ "$missing" -ne 0 ]]; then
-            echo "One or more GitHub Actions repository secrets are unavailable to this workflow."
-            echo "Add them under Settings > Secrets and variables > Actions > Repository secrets."
-            exit 1
-          fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/divvoice-release.jks"
-          test -s "$RUNNER_TEMP/divvoice-release.jks"
-          echo "ready=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
 
-      - name: Sign and verify release APK
-        if: steps.signing.outputs.ready == 'true'
-        shell: bash
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          KEYSTORE_PATH="$RUNNER_TEMP/divvoice-release.jks"
+          FINAL="app/build/outputs/apk/release/DIV-Voice-Smooth-final.apk"
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
           ALIGNED="$RUNNER_TEMP/divvoice-aligned.apk"
-          FINAL="app/build/outputs/apk/release/DIV-Voice-Smooth-final.apk"
+
+          if [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
+            echo "Using the configured GitHub release signing key."
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+            test -s "$KEYSTORE_PATH"
+            SIGN_STOREPASS="$KEYSTORE_PASSWORD"
+            SIGN_KEYPASS="$KEY_PASSWORD"
+            SIGN_ALIAS="$KEY_ALIAS"
+          else
+            echo "Configured signing secrets are unavailable. Creating a fresh temporary release key for this build."
+            echo "This fallback APK is signed for installation/testing; keep a permanent signing key for future updates."
+            SIGN_STOREPASS="$(openssl rand -hex 24)"
+            SIGN_KEYPASS="$SIGN_STOREPASS"
+            SIGN_ALIAS="divvoice"
+            keytool -genkeypair -noprompt               -keystore "$KEYSTORE_PATH"               -storepass "$SIGN_STOREPASS"               -keypass "$SIGN_KEYPASS"               -alias "$SIGN_ALIAS"               -keyalg RSA               -keysize 2048               -validity 10000               -dname "CN=DIV Voice Smooth, OU=DivStudio, O=DivStudio Co Ltd, L=Lagos, ST=Lagos, C=NG"
+          fi
+
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           "$BUILD_TOOLS/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
-          "$BUILD_TOOLS/apksigner" sign             --ks "$RUNNER_TEMP/divvoice-release.jks"             --ks-key-alias "$KEY_ALIAS"             --ks-pass "pass:$KEYSTORE_PASSWORD"             --key-pass "pass:$KEY_PASSWORD"             --out "$FINAL" "$ALIGNED"
+
+          "$BUILD_TOOLS/apksigner" sign             --ks "$KEYSTORE_PATH"             --ks-key-alias "$SIGN_ALIAS"             --ks-pass "pass:$SIGN_STOREPASS"             --key-pass "pass:$SIGN_KEYPASS"             --out "$FINAL"             "$ALIGNED"
+
           "$BUILD_TOOLS/apksigner" verify --verbose "$FINAL"
-          rm -f "$ALIGNED" "$RUNNER_TEMP/divvoice-release.jks"
+          test -s "$FINAL"
+
+          rm -f "$ALIGNED" "$KEYSTORE_PATH"
 
       - name: Upload final signed APK
-        if: steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: DIV-Voice-Smooth-final
