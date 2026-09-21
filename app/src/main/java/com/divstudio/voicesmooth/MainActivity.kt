@@ -385,7 +385,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }) { Text(if (isRecording) "STOP RECORDING" else "RECORD VOICE") }
                     Spacer(Modifier.height(10.dp))
-                    Button(enabled = ready && !isRecording, onClick = { smoothRecording() }) {
+                    Button(enabled = ready && !isRecording, onClick = { smoothed = true; smoothRecording() }) {
                         Text("NOISE REDUCE + SMOOTH")
                     }
                     Spacer(Modifier.height(10.dp))
@@ -393,17 +393,20 @@ class MainActivity : ComponentActivity() {
                         rawFile?.let { play(it); statusText = "Playing original preview" }
                     }) { Text("PREVIEW ORIGINAL") }
                     Spacer(Modifier.height(10.dp))
-                    OutlinedButton(enabled = smoothed && smoothFile?.exists() == true, onClick = {
-                        smoothFile?.let { play(it); statusText = "Playing smooth preview" }
+                    OutlinedButton(enabled = smoothed, onClick = {
+                        if (smoothFile?.exists() == true) smoothFile?.let { play(it); statusText = "Playing smooth preview" }
+                        else statusText = "Still processing — please wait"
                     }) { Text("PREVIEW SMOOTH") }
                     Spacer(Modifier.height(10.dp))
                     Row {
-                        Button(enabled = smoothed && smoothFile?.exists() == true, onClick = {
-                            smoothFile?.let { statusText = if (save(it)) "Saved to Music/DIV Voice Smooth" else "Save failed" }
+                        Button(enabled = smoothed, onClick = {
+                            if (smoothFile?.exists() == true) smoothFile?.let { statusText = if (save(it)) "Saved to Music/DIV Voice Smooth" else "Save failed" }
+                            else statusText = "Still processing — please wait"
                         }) { Text("SAVE") }
                         Spacer(Modifier.width(10.dp))
-                        Button(enabled = smoothed && smoothFile?.exists() == true, onClick = {
-                            smoothFile?.let { share(it) }
+                        Button(enabled = smoothed, onClick = {
+                            if (smoothFile?.exists() == true) smoothFile?.let { share(it) }
+                            else statusText = "Still processing — please wait"
                         }) { Text("SHARE") }
                     }
                 }
